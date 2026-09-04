@@ -34,35 +34,39 @@ class StatutPontPortSaintNazaireCard extends HTMLElement {
       const state = (stateObj.state || '').toLowerCase();
       const minutesLeft = stateObj.attributes.minutes_avant_fermeture;
       const voiesOuvertes = stateObj.attributes.voies_ouvertes;
-      const modeCirculation = stateObj.attributes.mode_circulation;
+      const tpsStBrevin = stateObj.attributes.temps_vers_st_brevin;
+      const tpsStNazaire = stateObj.attributes.temps_vers_st_nazaire;
 
-      let bgColor = '#4CAF50'; // Vert (Ouvert / Normal)
+      let bgColor = '#4CAF50'; // Vert (Ouvert)
       let statusText = 'Ouvert';
       let subDetail = '';
 
-      // Gestion spécifique du Grand Pont (avec voies réversibles / vent)
-      if (entityId.includes('grand_pont')) {
+      // Traitement spécifique du Pont de Saint-Nazaire
+      if (entityId.includes('pont_de_saint_nazaire')) {
         if (state === 'ferme' || state === 'closed') {
           bgColor = '#F44336';
-          statusText = 'Pont Fermé (Vent fort)';
-        } else if (state === 'alerte' || state === 'restreint') {
-          bgColor = '#FF9800';
-          statusText = 'Circulation Restreinte';
+          statusText = 'Fermé';
         } else {
-          statusText = modeCirculation || 'Circulation normale';
+          statusText = 'Ouvert';
         }
 
-        if (voiesOuvertes) {
-          subDetail = `<div style="font-size: 0.78em; opacity: 0.9; margin-top: 4px; font-weight: 400;">🚗 ${voiesOuvertes}</div>`;
-        }
+        let times = [];
+        if (tpsStNazaire !== undefined && tpsStNazaire !== null) times.push(`📍 St-Nazaire: ${tpsStNazaire} min`);
+        if (tpsStBrevin !== undefined && tpsStBrevin !== null) times.push(`📍 St-Brevin: ${tpsStBrevin} min`);
+
+        subDetail = `
+          <div style="font-size: 0.8em; opacity: 0.95; margin-top: 6px; font-weight: 400; border-top: 1px solid rgba(255,255,255,0.2); padding-top: 4px;">
+            <div>🚦 ${voiesOuvertes || 'Informations voies indisponibles'}</div>
+            ${times.length > 0 ? `<div style="margin-top: 2px;">⏱️ ${times.join(' | ')}</div>` : ''}
+          </div>`;
       } 
-      // Gestion des ponts mobiles du port
+      // Traitement des ponts du port
       else {
         if (state === 'ferme' || state === 'closed' || state === 'off' || state === 'fermé') {
-          bgColor = '#F44336'; // Rouge
+          bgColor = '#F44336';
           statusText = 'Fermé';
         } else if (state === 'fermeture_imminente' || (minutesLeft !== undefined && minutesLeft !== null && minutesLeft <= 15)) {
-          bgColor = '#FF9800'; // Orange
+          bgColor = '#FF9800';
           statusText = minutesLeft ? `Ferme dans ${minutesLeft} min` : 'Fermeture < 15 min';
         }
       }
@@ -92,7 +96,6 @@ class StatutPontPortSaintNazaireCard extends HTMLElement {
       `;
     }).join('');
 
-    // Rendre chaque carte cliquable pour ouvrir l'historique de l'entité
     this.content.querySelectorAll('.bridge-row').forEach(element => {
       element.addEventListener('click', () => {
         const entityId = element.getAttribute('data-entity');
@@ -106,23 +109,8 @@ class StatutPontPortSaintNazaireCard extends HTMLElement {
     });
   }
 
-  // Permet à Home Assistant de reconnaître l'éditeur visuel
   static getConfigElement() {
     return document.createElement('statut-pont-port-saint-nazaire-card-editor');
-  }
-
-  static getStubConfig() {
-    return {
-      title: "Ponts de Saint-Nazaire",
-      entities: [
-        "sensor.pont_du_pertuis",
-        "sensor.pont_joubert",
-        "sensor.pont_ecluse_est",
-        "sensor.pont_sud_amont",
-        "sensor.pont_sud_aval",
-        "sensor.grand_pont_saint_nazaire"
-      ]
-    };
   }
 
   getCardSize() {
@@ -130,7 +118,6 @@ class StatutPontPortSaintNazaireCard extends HTMLElement {
   }
 }
 
-// Classe de l'éditeur visuel pour l'interface graphique Home Assistant
 class StatutPontPortSaintNazaireCardEditor extends HTMLElement {
   setConfig(config) {
     this._config = config;
@@ -144,6 +131,6 @@ window.customCards = window.customCards || [];
 window.customCards.push({
   type: "statut-pont-port-saint-nazaire-card",
   name: "Carte Statut Ponts Saint-Nazaire",
-  description: "Affiche l'état en temps réel des ponts du port et du Grand Pont de Saint-Nazaire (sens de circulation, voies ouvertes, historique).",
+  description: "Affiche l'état des ponts du port et du Pont de Saint-Nazaire avec sens de circulation et temps de parcours.",
   preview: true,
 });
