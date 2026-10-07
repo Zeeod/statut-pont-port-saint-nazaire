@@ -1,5 +1,7 @@
 {
   "name": "Statut Pont Port Saint Nazaire",
   "filename": "statut-pont-port-saint-nazaire.js",
-  "render_readme": true
+  "render_readme": true,
+  "version": "2.0.0",
+  "homeassistant": "2023.9.0"
 }

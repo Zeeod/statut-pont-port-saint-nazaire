@@ -1,0 +1,450 @@
+################################################################################
+# Configuration Home Assistant - Ponts de Saint-Nazaire
+# À inclure dans votre configuration.yaml ou dans des fichiers séparés
+################################################################################
+#
+# STRUCTURE CONSEILLÉE dans configuration.yaml :
+#
+#   rest: !include rest_ponts_saint_nazaire.yaml
+#   command_line: !include command_line_ponts_port.yaml
+#   template: !include template_ponts.yaml
+#
+################################################################################
+
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │  1. PONT DE SAINT-NAZAIRE  — API Open Data Loire-Atlantique (gratuit, live)
+# └─────────────────────────────────────────────────────────────────────────────
+#
+# Source officielle : https://data.loire-atlantique.fr
+# Dataset : 224400028_tps-de-parcours-et-sens-de-circulation-du-pont-de-saint-nazaire-rt
+# Données : sens de circulation (code Mxyz), temps de traversée, prévisions
+# Mise à jour : en continu (sondage toutes les 2 minutes)
+#
+# ⚠️  Copiez ce bloc dans votre fichier rest_ponts_saint_nazaire.yaml
+#     OU directement sous la clé "rest:" de configuration.yaml
+#
+
+rest:
+  - resource: "https://data.loire-atlantique.fr/api/explore/v2.1/catalog/datasets/224400028_tps-de-parcours-et-sens-de-circulation-du-pont-de-saint-nazaire-rt/exports/json"
+    scan_interval: 120  # 2 minutes (respecte les limites de l'API)
+    sensor:
+
+      # ── État actuel ──────────────────────────────────────────────────────────
+
+      - name: "Pont Saint-Nazaire Code"
+        unique_id: pont_stnaz_code_current
+        icon: mdi:bridge
+        value_template: >
+          {% set results = value_json %}
+          {% set current = results | selectattr('code_current_mode', 'ne', None) | list %}
+          {% if current | length > 0 %}
+            {{ current[0].code_current_mode }}
+          {% else %}
+            INDETERMINE
+          {% endif %}
+
+      - name: "Pont Saint-Nazaire Libellé"
+        unique_id: pont_stnaz_lib_current
+        icon: mdi:information-outline
+        value_template: >
+          {% set results = value_json %}
+          {% set current = results | selectattr('lib_current_mode', 'ne', None) | list %}
+          {% if current | length > 0 %}
+            {{ current[0].lib_current_mode }}
+          {% else %}
+            Informations indisponibles
+          {% endif %}
+
+      - name: "Pont Saint-Nazaire Temps vers St-Brévin"
+        unique_id: pont_stnaz_tps_stbrevin
+        icon: mdi:timer-outline
+        unit_of_measurement: "min"
+        value_template: >
+          {% set results = value_json %}
+          {% set current = results | selectattr('time_certe_stbrevin', 'ne', None) | list %}
+          {% if current | length > 0 %}
+            {{ current[0].time_certe_stbrevin | round(0) }}
+          {% else %}
+            unknown
+          {% endif %}
+
+      - name: "Pont Saint-Nazaire Temps vers St-Nazaire"
+        unique_id: pont_stnaz_tps_stnazaire
+        icon: mdi:timer-outline
+        unit_of_measurement: "min"
+        value_template: >
+          {% set results = value_json %}
+          {% set current = results | selectattr('time_stbrevin_certe', 'ne', None) | list %}
+          {% if current | length > 0 %}
+            {{ current[0].time_stbrevin_certe | round(0) }}
+          {% else %}
+            unknown
+          {% endif %}
+
+      # ── Prochaine évolution (prévision) ──────────────────────────────────────
+
+      - name: "Pont Saint-Nazaire Prochaine Code"
+        unique_id: pont_stnaz_next_code
+        icon: mdi:clock-outline
+        value_template: >
+          {% set results = value_json %}
+          {% set nexts = results | selectattr('code_mode', 'ne', None) | list %}
+          {% if nexts | length > 0 %}
+            {{ nexts[0].code_mode }}
+          {% else %}
+            none
+          {% endif %}
+
+      - name: "Pont Saint-Nazaire Prochaine Libellé"
+        unique_id: pont_stnaz_next_lib
+        icon: mdi:clock-outline
+        value_template: >
+          {% set results = value_json %}
+          {% set nexts = results | selectattr('lib_mode', 'ne', None) | list %}
+          {% if nexts | length > 0 %}
+            {{ nexts[0].lib_mode }}
+          {% else %}
+            none
+          {% endif %}
+
+      - name: "Pont Saint-Nazaire Prochaine Depuis"
+        unique_id: pont_stnaz_next_from
+        icon: mdi:calendar-clock
+        value_template: >
+          {% set results = value_json %}
+          {% set nexts = results | selectattr('from', 'ne', None) | list %}
+          {% if nexts | length > 0 %}
+            {{ nexts[0].from }}
+          {% else %}
+            none
+          {% endif %}
+
+  # ┌─────────────────────────────────────────────────────────────────────────
+  # │  2. VENT — API Open-Meteo (gratuit, sans clé, station proche du pont)
+  # └─────────────────────────────────────────────────────────────────────────
+  #
+  # Coordonnées : centre du Pont de Saint-Nazaire (47.2761, -2.1644)
+  # Altitude : 60m (hauteur tablier du pont) → wind_speed_1000hPa approx.
+  # Open-Meteo utilise des modèles météo précis à 1km de résolution.
+  #
+  - resource: "https://api.open-meteo.com/v1/forecast?latitude=47.2761&longitude=-2.1644&current=wind_speed_10m,wind_direction_10m,wind_gusts_10m&wind_speed_unit=kmh&timezone=Europe%2FParis"
+    scan_interval: 600  # 10 minutes
+    sensor:
+
+      - name: "Pont Saint-Nazaire Vent Vitesse"
+        unique_id: pont_stnaz_wind_speed
+        icon: mdi:weather-windy
+        unit_of_measurement: "km/h"
+        value_template: "{{ value_json.current.wind_speed_10m | round(1) }}"
+
+      - name: "Pont Saint-Nazaire Vent Direction"
+        unique_id: pont_stnaz_wind_dir
+        icon: mdi:compass-outline
+        unit_of_measurement: "°"
+        value_template: "{{ value_json.current.wind_direction_10m }}"
+
+      - name: "Pont Saint-Nazaire Vent Rafales"
+        unique_id: pont_stnaz_wind_gust
+        icon: mdi:weather-hurricane
+        unit_of_measurement: "km/h"
+        value_template: "{{ value_json.current.wind_gusts_10m | round(1) }}"
+
+
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │  3. TEMPLATE — Capteurs dérivés calculés
+# └─────────────────────────────────────────────────────────────────────────────
+#
+# Ces templates calculent l'état du pont (ouvert/fermé) à partir du code Mxyz
+# et des entités déjà créées. Utile pour les automations.
+#
+# ⚠️  Copiez ce bloc sous la clé "template:" de configuration.yaml
+#
+
+template:
+  - sensor:
+      - name: "Pont Saint-Nazaire Statut"
+        unique_id: pont_stnaz_statut
+        icon: mdi:bridge
+        state: >
+          {% set code = states('sensor.pont_saint_nazaire_code') %}
+          {% if code == 'M000' %}
+            fermé
+          {% elif code.startswith('Mu') %}
+            urgence
+          {% elif code.startswith('Me') %}
+            travaux
+          {% elif code == 'INDETERMINE' %}
+            indéterminé
+          {% elif code not in ['unknown', 'unavailable', 'none', ''] %}
+            ouvert
+          {% else %}
+            indisponible
+          {% endif %}
+        attributes:
+          code: "{{ states('sensor.pont_saint_nazaire_code') }}"
+          libelle: "{{ states('sensor.pont_saint_nazaire_libelle') }}"
+          voie_1: >
+            {% set code = states('sensor.pont_saint_nazaire_code') %}
+            {% if code | length >= 4 %}
+              {% set v = code[-3] | int(-1) %}
+              {% if v == 0 %}fermée{% elif v == 1 %}St-Naz → St-Brévin{% elif v == 2 %}St-Brévin → St-Naz{% else %}inconnu{% endif %}
+            {% else %}inconnu{% endif %}
+          voie_2: >
+            {% set code = states('sensor.pont_saint_nazaire_code') %}
+            {% if code | length >= 4 %}
+              {% set v = code[-2] | int(-1) %}
+              {% if v == 0 %}fermée{% elif v == 1 %}St-Naz → St-Brévin{% elif v == 2 %}St-Brévin → St-Naz{% else %}inconnu{% endif %}
+            {% else %}inconnu{% endif %}
+          voie_3: >
+            {% set code = states('sensor.pont_saint_nazaire_code') %}
+            {% if code | length >= 4 %}
+              {% set v = code[-1] | int(-1) %}
+              {% if v == 0 %}fermée{% elif v == 1 %}St-Naz → St-Brévin{% elif v == 2 %}St-Brévin → St-Naz{% else %}inconnu{% endif %}
+            {% else %}inconnu{% endif %}
+          temps_vers_stbrevin: "{{ states('sensor.pont_saint_nazaire_temps_vers_st_brevin') }}"
+          temps_vers_stnazaire: "{{ states('sensor.pont_saint_nazaire_temps_vers_st_nazaire') }}"
+          vent_kmh: "{{ states('sensor.pont_saint_nazaire_vent_vitesse') }}"
+          vent_dir: "{{ states('sensor.pont_saint_nazaire_vent_direction') }}"
+
+      - name: "Pont Saint-Nazaire Alerte Vent"
+        unique_id: pont_stnaz_wind_alert
+        icon: mdi:weather-windy-variant
+        state: >
+          {% set v = states('sensor.pont_saint_nazaire_vent_vitesse') | float(0) %}
+          {% if v >= 120 %}critique{% elif v >= 80 %}avertissement{% elif v >= 60 %}attention{% else %}normal{% endif %}
+
+  # ┌────────────────────────────────────────────────────────────────────────
+  # │  4. PONTS DU PORT — Capteurs manuels (à mettre à jour via automations)
+  # └────────────────────────────────────────────────────────────────────────
+  #
+  # Ces capteurs template wrappent des input_select que vous gérez
+  # (mise à jour possible via les notifications de l'app "À bon port").
+  # Voir section 5 pour la méthode de mise à jour automatique.
+  #
+
+  - sensor:
+      - name: "Pont du Pertuis"
+        unique_id: pont_port_pertuis
+        icon: mdi:ferry
+        state: "{{ states('input_select.pont_pertuis_etat') | lower }}"
+        attributes:
+          friendly_name: "Pont tournant du Pertuis"
+          last_state: "{{ states('input_text.pont_pertuis_last_state') }}"
+          last_state_time: "{{ states('input_text.pont_pertuis_last_time') }}"
+          next_event: "{{ states('input_text.pont_pertuis_next_event') }}"
+          next_event_time: "{{ states('input_text.pont_pertuis_next_time') }}"
+
+      - name: "Porte Amont Joubert"
+        unique_id: pont_port_joubert
+        icon: mdi:ferry
+        state: "{{ states('input_select.pont_joubert_etat') | lower }}"
+        attributes:
+          friendly_name: "Porte amont Joubert"
+          last_state: "{{ states('input_text.pont_joubert_last_state') }}"
+          last_state_time: "{{ states('input_text.pont_joubert_last_time') }}"
+          next_event: "{{ states('input_text.pont_joubert_next_event') }}"
+          next_event_time: "{{ states('input_text.pont_joubert_next_time') }}"
+
+      - name: "Pont Tournant Écluse Est"
+        unique_id: pont_port_ecluse_est
+        icon: mdi:ferry
+        state: "{{ states('input_select.pont_ecluse_est_etat') | lower }}"
+        attributes:
+          friendly_name: "Pont tournant écluse Est"
+          last_state: "{{ states('input_text.pont_ecluse_est_last_state') }}"
+          last_state_time: "{{ states('input_text.pont_ecluse_est_last_time') }}"
+
+      - name: "Pont Basculant Écluse Sud"
+        unique_id: pont_port_ecluse_sud_basc
+        icon: mdi:ferry
+        state: "{{ states('input_select.pont_ecluse_sud_basc_etat') | lower }}"
+        attributes:
+          friendly_name: "Pont basculant écluse Sud"
+
+      - name: "Pont Tournant Écluse Sud"
+        unique_id: pont_port_ecluse_sud_turn
+        icon: mdi:ferry
+        state: "{{ states('input_select.pont_ecluse_sud_turn_etat') | lower }}"
+        attributes:
+          friendly_name: "Pont tournant écluse Sud"
+
+
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │  5. INPUT HELPERS — États manuels des ponts du port
+# └─────────────────────────────────────────────────────────────────────────────
+#
+# ⚠️  Créez ces helpers via l'interface HA :
+#    Paramètres > Appareils et services > Helpers > Créer un helper
+#    OU ajoutez ce bloc dans configuration.yaml sous la clé "input_select:" / "input_text:"
+#
+
+input_select:
+  pont_pertuis_etat:
+    name: "État Pont Pertuis"
+    options: ["ouvert", "fermé", "fermeture_imminente", "inconnu"]
+    initial: "inconnu"
+    icon: mdi:ferry
+
+  pont_joubert_etat:
+    name: "État Porte Joubert"
+    options: ["ouvert", "fermé", "fermeture_imminente", "inconnu"]
+    initial: "inconnu"
+    icon: mdi:ferry
+
+  pont_ecluse_est_etat:
+    name: "État Pont Écluse Est"
+    options: ["ouvert", "fermé", "fermeture_imminente", "inconnu"]
+    initial: "inconnu"
+    icon: mdi:ferry
+
+  pont_ecluse_sud_basc_etat:
+    name: "État Pont Basculant Écluse Sud"
+    options: ["ouvert", "fermé", "fermeture_imminente", "inconnu"]
+    initial: "inconnu"
+    icon: mdi:ferry
+
+  pont_ecluse_sud_turn_etat:
+    name: "État Pont Tournant Écluse Sud"
+    options: ["ouvert", "fermé", "fermeture_imminente", "inconnu"]
+    initial: "inconnu"
+    icon: mdi:ferry
+
+input_text:
+  pont_pertuis_last_state:
+    name: "Dernier état Pertuis"
+    max: 30
+  pont_pertuis_last_time:
+    name: "Heure dernier état Pertuis"
+    max: 50
+  pont_pertuis_next_event:
+    name: "Prochain événement Pertuis"
+    max: 50
+  pont_pertuis_next_time:
+    name: "Heure prochain événement Pertuis"
+    max: 50
+
+  pont_joubert_last_state:
+    name: "Dernier état Joubert"
+    max: 30
+  pont_joubert_last_time:
+    name: "Heure dernier état Joubert"
+    max: 50
+  pont_joubert_next_event:
+    name: "Prochain événement Joubert"
+    max: 50
+  pont_joubert_next_time:
+    name: "Heure prochain événement Joubert"
+    max: 50
+
+  pont_ecluse_est_last_state:
+    name: "Dernier état Écluse Est"
+    max: 30
+  pont_ecluse_est_last_time:
+    name: "Heure dernier état Écluse Est"
+    max: 50
+
+
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │  6. AUTOMATIONS — Archivage historique des états (Pont de St-Naz)
+# └─────────────────────────────────────────────────────────────────────────────
+#
+# Cette automation enregistre automatiquement l'heure de chaque changement
+# d'état du Pont de Saint-Nazaire dans des capteurs d'historique.
+#
+
+automation:
+  - id: pont_stnaz_archiver_dernier_etat
+    alias: "Pont St-Naz – Archiver dernier changement d'état"
+    description: "Mémorise l'heure de chaque ouverture/fermeture du pont"
+    trigger:
+      - platform: state
+        entity_id: sensor.pont_saint_nazaire_code
+    condition:
+      - condition: template
+        value_template: >
+          {{ trigger.from_state.state != trigger.to_state.state
+             and trigger.to_state.state not in ['unknown', 'unavailable'] }}
+    action:
+      - service: logbook.log
+        data:
+          name: "Pont de Saint-Nazaire"
+          message: >
+            Mode changé : {{ trigger.from_state.state }} → {{ trigger.to_state.state }}
+            ({{ states('sensor.pont_saint_nazaire_libelle') }})
+          entity_id: sensor.pont_saint_nazaire_code
+
+  - id: pont_stnaz_alerte_fermeture
+    alias: "Pont St-Naz – Notification fermeture"
+    description: "Envoie une notification quand le pont se ferme ou passe en mode travaux"
+    trigger:
+      - platform: state
+        entity_id: sensor.pont_saint_nazaire_statut
+        to: "fermé"
+      - platform: state
+        entity_id: sensor.pont_saint_nazaire_statut
+        to: "travaux"
+      - platform: state
+        entity_id: sensor.pont_saint_nazaire_statut
+        to: "urgence"
+    action:
+      - service: notify.notify  # Remplacez par votre service notify (ex: notify.mobile_app_xxx)
+        data:
+          title: "🌉 Pont de Saint-Nazaire"
+          message: >
+            État : {{ states('sensor.pont_saint_nazaire_statut') | upper }}
+            – {{ states('sensor.pont_saint_nazaire_libelle') }}
+
+  - id: pont_stnaz_alerte_vent
+    alias: "Pont St-Naz – Alerte vent fort"
+    description: "Notification si vent > 80 km/h sur le pont"
+    trigger:
+      - platform: state
+        entity_id: sensor.pont_saint_nazaire_alerte_vent
+        to: "avertissement"
+      - platform: state
+        entity_id: sensor.pont_saint_nazaire_alerte_vent
+        to: "critique"
+    action:
+      - service: notify.notify
+        data:
+          title: "💨 Vent fort – Pont de Saint-Nazaire"
+          message: >
+            Vent : {{ states('sensor.pont_saint_nazaire_vent_vitesse') }} km/h
+            (rafales {{ states('sensor.pont_saint_nazaire_vent_rafales') }} km/h)
+            – {{ states('sensor.pont_saint_nazaire_alerte_vent') | upper }}
+
+
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │  7. LOVELACE — Configuration de la carte dashboard
+# └─────────────────────────────────────────────────────────────────────────────
+#
+# Ajoutez ceci dans votre dashboard Lovelace (yaml brut ou via l'UI)
+#
+
+# Exemple de configuration complète de la carte :
+#
+# type: custom:statut-pont-port-saint-nazaire-card
+# title: "🌉 Ponts de Saint-Nazaire"
+# show_st_nazaire_bridge: true
+# show_port_bridges: true
+# show_wind: true
+#
+# # Entités du Pont de Saint-Nazaire (créées par la section REST ci-dessus)
+# entity_pont_st_naz: sensor.pont_saint_nazaire_code
+# entity_pont_st_naz_lib: sensor.pont_saint_nazaire_libelle
+# entity_pont_tps_sn: sensor.pont_saint_nazaire_temps_vers_st_brevin
+# entity_pont_tps_sb: sensor.pont_saint_nazaire_temps_vers_st_nazaire
+# entity_pont_next_code: sensor.pont_saint_nazaire_prochaine_code
+# entity_pont_next_lib: sensor.pont_saint_nazaire_prochaine_libelle
+# entity_pont_next_from: sensor.pont_saint_nazaire_prochaine_depuis
+# entity_wind: sensor.pont_saint_nazaire_vent_vitesse
+# entity_wind_dir: sensor.pont_saint_nazaire_vent_direction
+# entity_wind_gust: sensor.pont_saint_nazaire_vent_rafales
+#
+# # Entités des ponts du port (créées par la section Template + input_select)
+# port_bridge_entities:
+#   - sensor.pont_du_pertuis
+#   - sensor.porte_amont_joubert
+#   - sensor.pont_tournant_ecluse_est
+#   - sensor.pont_basculant_ecluse_sud
+#   - sensor.pont_tournant_ecluse_sud
