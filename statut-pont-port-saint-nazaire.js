@@ -135,10 +135,38 @@ function renderLaneSVG(lanes, allClosed) {
   </svg>`;
 }
 
+// ─── Détection Pont de Saint-Nazaire ──────────────────────────────────────────
+
+function isSaintNazaireBridge(entityId, friendlyName = '') {
+  const lowerId = (entityId || '').toLowerCase();
+  const lowerName = (friendlyName || '').toLowerCase();
+  if (
+    lowerId.includes('pertuis') ||
+    lowerId.includes('joubert') ||
+    lowerId.includes('ecluse') ||
+    lowerId.includes('écluse') ||
+    lowerId.includes('sud_amont') ||
+    lowerId.includes('sud_aval') ||
+    lowerName.includes('pertuis') ||
+    lowerName.includes('joubert') ||
+    lowerName.includes('écluse') ||
+    lowerName.includes('ecluse') ||
+    lowerName.includes('sud amont') ||
+    lowerName.includes('sud aval')
+  ) {
+    return false;
+  }
+  return lowerId.includes('pont_saint_nazaire') || 
+         lowerId.includes('pont_de_saint_nazaire') || 
+         lowerId.includes('grand_pont') ||
+         lowerName.includes('pont de saint-nazaire') ||
+         lowerName.includes('pont de saint nazaire');
+}
+
 // ─── Rendu Pont de Saint-Nazaire ─────────────────────────────────────────────
 
-function renderSaintNazaireBridge(hass, config) {
-  const entityCode = config.entity_pont_st_naz || 'sensor.pont_saint_nazaire_code';
+function renderSaintNazaireBridge(hass, config, detectedEntityId = null) {
+  const entityCode = config.entity_pont_st_naz || config.main_bridge || detectedEntityId || 'sensor.pont_saint_nazaire_code';
   const entityLib = config.entity_pont_st_naz_lib || 'sensor.pont_saint_nazaire_libelle';
   const entityTpsSN = config.entity_pont_tps_sn || 'sensor.pont_saint_nazaire_temps_vers_stbrevin';
   const entityTpsSB = config.entity_pont_tps_sb || 'sensor.pont_saint_nazaire_temps_vers_stnazaire';
@@ -161,22 +189,25 @@ function renderSaintNazaireBridge(hass, config) {
   const stWindDir = hass.states[entityWindDir];
   const stWindGust = hass.states[entityWindGust];
 
-  const code = stCode ? stCode.state : null;
-  const lib = stLib ? stLib.state : (code || '—');
+  // Récupération souple du code et du libellé (support capteur unique multi-attributs ou capteurs séparés)
+  const attrs = stCode ? (stCode.attributes || {}) : {};
+  const rawCode = attrs.code_current_mode || attrs.code_mode || (stCode ? stCode.state : null);
+  const code = rawCode && rawCode !== 'unavailable' && rawCode !== 'unknown' ? rawCode : null;
+  const lib = attrs.lib_current_mode || attrs.voies_ouvertes || (stLib ? stLib.state : null) || (code && !code.startsWith('M') ? code : (code || '—'));
   const parsed = parseBridgeCode(code);
-  const allClosed = parsed ? parsed.allClosed : false;
+  const allClosed = parsed ? parsed.allClosed : (code === 'M000' || (stCode && ['ferme','closed','fermé'].includes(stCode.state.toLowerCase())));
   const isEmergency = parsed && (parsed.type === 'urgence' || parsed.type === 'travaux');
 
-  const tpsSN = stTpsSN ? parseFloat(stTpsSN.state) : null;
-  const tpsSB = stTpsSB ? parseFloat(stTpsSB.state) : null;
+  const tpsSN = attrs.time_certe_stbrevin != null ? parseFloat(attrs.time_certe_stbrevin) : (attrs.temps_vers_st_brevin != null ? parseFloat(attrs.temps_vers_st_brevin) : (stTpsSN ? parseFloat(stTpsSN.state) : null));
+  const tpsSB = attrs.time_stbrevin_certe != null ? parseFloat(attrs.time_stbrevin_certe) : (attrs.temps_vers_st_nazaire != null ? parseFloat(attrs.temps_vers_st_nazaire) : (stTpsSB ? parseFloat(stTpsSB.state) : null));
 
-  const nextCode = stNextCode ? stNextCode.state : null;
-  const nextLib = stNextLib ? stNextLib.state : null;
-  const nextFrom = stNextFrom ? stNextFrom.state : null;
+  const nextCode = attrs.prochaine_code || (stNextCode ? stNextCode.state : null);
+  const nextLib = attrs.prochaine_libelle || (stNextLib ? stNextLib.state : null);
+  const nextFrom = attrs.prochaine_depuis || (stNextFrom ? stNextFrom.state : null);
 
-  const windSpeed = stWind ? parseFloat(stWind.state) : null;
-  const windDir = stWindDir ? parseFloat(stWindDir.state) : null;
-  const windGust = stWindGust ? parseFloat(stWindGust.state) : null;
+  const windSpeed = attrs.vent != null ? parseFloat(attrs.vent) : (attrs.wind_speed != null ? parseFloat(attrs.wind_speed) : (stWind ? parseFloat(stWind.state) : null));
+  const windDir = attrs.direction_vent != null ? parseFloat(attrs.direction_vent) : (attrs.wind_dir != null ? parseFloat(attrs.wind_dir) : (stWindDir ? parseFloat(stWindDir.state) : null));
+  const windGust = attrs.rafales != null ? parseFloat(attrs.rafales) : (attrs.wind_gust != null ? parseFloat(attrs.wind_gust) : (stWindGust ? parseFloat(stWindGust.state) : null));
 
   // Couleur principale
   let headerBg = 'linear-gradient(135deg, #1565C0 0%, #1976D2 100%)';
@@ -191,7 +222,7 @@ function renderSaintNazaireBridge(hass, config) {
     headerBg = 'linear-gradient(135deg, #E65100 0%, #F57C00 100%)';
     statusBadge = `<span class="psnz-badge psnz-badge--orange">${parsed.type === 'urgence' ? 'URGENCE' : 'TRAVAUX'}</span>`;
     statusColor = '#FFA726';
-  } else if (parsed) {
+  } else if (parsed || (stCode && !['unavailable', 'unknown'].includes(stCode.state.toLowerCase()))) {
     statusBadge = '<span class="psnz-badge psnz-badge--green">OUVERT</span>';
   }
 
@@ -239,12 +270,12 @@ function renderSaintNazaireBridge(hass, config) {
 
   // Vent
   let windHtml = '';
-  if (windSpeed !== null) {
+  if (windSpeed !== null && !isNaN(windSpeed)) {
     const kmh = Math.round(windSpeed);
     const bft = beaufortScale(kmh);
     const alert = windAlert(kmh);
     const dirLabel = windDirection(windDir);
-    const gustHtml = windGust !== null ? ` (rafales ${Math.round(windGust)} km/h)` : '';
+    const gustHtml = windGust !== null && !isNaN(windGust) ? ` (rafales ${Math.round(windGust)} km/h)` : '';
     const alertHtml = alert ? `<div class="psnz-wind-alert psnz-wind-alert--${alert.level}">${alert.msg}</div>` : '';
     windHtml = `
       <div class="psnz-wind">
@@ -258,7 +289,7 @@ function renderSaintNazaireBridge(hass, config) {
   }
 
   return `
-    <div class="psnz-card psnz-card--stnaz" style="background:${headerBg}">
+    <div class="psnz-card psnz-card--stnaz" data-entity="${entityCode}" style="background:${headerBg}">
       <div class="psnz-card-header">
         <div class="psnz-card-title">
           <span class="psnz-icon">🌉</span>
@@ -564,28 +595,38 @@ class StatutPontPortSaintNazaireCard extends HTMLElement {
     const hass = this._hass;
     const config = this.config;
 
+    // Détection automatique de l'entité du pont de St-Nazaire
+    let stNazEntityId = config.entity_pont_st_naz || config.main_bridge || null;
+    if (!stNazEntityId && config.entities && Array.isArray(config.entities)) {
+      stNazEntityId = config.entities.find(id => {
+        const stateObj = hass.states[id];
+        return isSaintNazaireBridge(id, stateObj?.attributes?.friendly_name);
+      }) || null;
+    }
+
     // Construire le contenu
     let sectionsHtml = '';
 
     // Section Pont de St-Nazaire
     if (config.show_st_nazaire_bridge !== false) {
-      sectionsHtml += renderSaintNazaireBridge(hass, config);
+      sectionsHtml += renderSaintNazaireBridge(hass, config, stNazEntityId);
     }
 
-    // Section Ponts du Port
-    if (config.show_port_bridges !== false && config.port_bridge_entities && config.port_bridge_entities.length > 0) {
+    // Section Ponts du Port (filtrage strict pour éviter tout doublon)
+    const rawPortList = (config.port_bridge_entities && config.port_bridge_entities.length > 0)
+      ? config.port_bridge_entities
+      : (Array.isArray(config.entities) ? config.entities : []);
+
+    const portEntities = rawPortList.filter(id => {
+      const stateObj = hass.states[id];
+      return id !== stNazEntityId && !isSaintNazaireBridge(id, stateObj?.attributes?.friendly_name);
+    });
+
+    if (config.show_port_bridges !== false && portEntities.length > 0) {
       if (config.show_st_nazaire_bridge !== false) {
-        sectionsHtml += `<div class="psnz-section-title">Ponts du Port</div>`;
+        sectionsHtml += `<div class="psnz-section-title">${config.port_section_title || 'Ponts du Port'}</div>`;
       }
-      config.port_bridge_entities.forEach(entityId => {
-        sectionsHtml += renderPortBridge(hass, entityId);
-      });
-    } else if (config.entities && Array.isArray(config.entities)) {
-      // Compat. ancienne config
-      if (config.show_st_nazaire_bridge !== false) {
-        sectionsHtml += `<div class="psnz-section-title">Ponts du Port</div>`;
-      }
-      config.entities.forEach(entityId => {
+      portEntities.forEach(entityId => {
         sectionsHtml += renderPortBridge(hass, entityId);
       });
     }
