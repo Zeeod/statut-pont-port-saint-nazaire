@@ -1,6 +1,6 @@
 /**
  * Carte Lovelace - Ponts de Saint-Nazaire
- * Version 2.0 - avec données temps réel, sens de circulation SVG, vent, prévisions
+ * Version 2.2 - Design moderne, voies fluides, affichage du vent et temps de trajet
  * Source: https://github.com/Zeeod/statut-pont-port-saint-nazaire
  */
 
@@ -8,23 +8,29 @@
 
 function parseBridgeCode(code) {
   if (!code || typeof code !== 'string') return null;
-  const m = code.match(/^(M[ue]?|Me|Mu)(\d)(\d)(\d)$/i);
-  if (!m) {
-    if (code === 'INDETERMINE') return { special: 'indetermine', lanes: [null, null, null] };
-    return null;
+  const clean = code.trim();
+  const m = clean.match(/^(M[ue]?|Me|Mu)(\d)(\d)(\d)$/i);
+  if (m) {
+    const prefix = m[1].toUpperCase();
+    const isEmergency = prefix.startsWith('MU') || prefix.startsWith('ME');
+    const type = prefix.startsWith('MU') ? 'urgence' : prefix.startsWith('ME') ? 'travaux' : 'normal';
+    const lanes = [parseInt(m[2]), parseInt(m[3]), parseInt(m[4])];
+    const allClosed = lanes.every(l => l === 0);
+    return { type, lanes, allClosed, raw: clean };
   }
-  const prefix = m[1].toUpperCase();
-  const isEmergency = prefix.startsWith('MU') || prefix.startsWith('ME');
-  const type = prefix.startsWith('MU') ? 'urgence' : prefix.startsWith('ME') ? 'travaux' : 'normal';
-  const lanes = [parseInt(m[2]), parseInt(m[3]), parseInt(m[4])];
-  const allClosed = lanes.every(l => l === 0);
-  return { type, lanes, allClosed, raw: code };
+  if (['ferme', 'fermé', 'closed'].includes(clean.toLowerCase())) {
+    return { type: 'ferme', lanes: [0, 0, 0], allClosed: true, raw: clean };
+  }
+  if (clean === 'INDETERMINE') {
+    return { special: 'indetermine', lanes: [null, null, null], raw: clean };
+  }
+  return null;
 }
 
 function laneStatus(val) {
   if (val === 0) return 'closed';
-  if (val === 1) return 'stnaz'; // St-Nazaire → St-Brévin
-  if (val === 2) return 'stbrevin'; // St-Brévin → St-Nazaire
+  if (val === 1) return 'stnaz'; // St-Nazaire → St-Brévin (Sud)
+  if (val === 2) return 'stbrevin'; // St-Brévin → St-Nazaire (Nord)
   return 'unknown';
 }
 
@@ -32,6 +38,7 @@ function formatTime(isoString) {
   if (!isoString) return null;
   try {
     const d = new Date(isoString);
+    if (isNaN(d.getTime())) return isoString;
     return d.toLocaleString('fr-FR', {
       weekday: 'short', day: '2-digit', month: '2-digit',
       hour: '2-digit', minute: '2-digit'
@@ -40,99 +47,16 @@ function formatTime(isoString) {
 }
 
 function windDirection(deg) {
-  if (deg == null) return '—';
+  if (deg == null || isNaN(deg)) return '';
   const dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSO','SO','OSO','O','ONO','NO','NNO'];
   return dirs[Math.round(deg / 22.5) % 16];
 }
 
-function beaufortScale(kmh) {
-  if (kmh < 1) return 0;
-  if (kmh < 6) return 1;
-  if (kmh < 12) return 2;
-  if (kmh < 20) return 3;
-  if (kmh < 29) return 4;
-  if (kmh < 39) return 5;
-  if (kmh < 50) return 6;
-  if (kmh < 62) return 7;
-  if (kmh < 75) return 8;
-  if (kmh < 89) return 9;
-  if (kmh < 103) return 10;
-  if (kmh < 118) return 11;
-  return 12;
-}
-
 function windAlert(kmh) {
   if (kmh >= 120) return { level: 'critical', msg: '🚫 Pont FERMÉ (vent > 120 km/h)' };
-  if (kmh >= 80) return { level: 'warning', msg: '⚠️ Vitesse limitée 50 km/h – 2-roues interdits' };
-  if (kmh >= 60) return { level: 'caution', msg: '💨 Vent fort – prudence recommandée' };
+  if (kmh >= 80) return { level: 'warning', msg: '⚠️ Vitesse limitée à 50 km/h – 2-roues & remorques interdits' };
+  if (kmh >= 60) return { level: 'caution', msg: '💨 Vent fort – vigilance requise' };
   return null;
-}
-
-// ─── SVG Sens de circulation ─────────────────────────────────────────────────
-
-function renderLaneSVG(lanes, allClosed) {
-  const W = 200, H = 80;
-  const laneW = 50, laneH = 56;
-  const startX = 25, startY = 12;
-  const laneColors = { closed: '#444', stnaz: '#2196F3', stbrevin: '#FF9800', unknown: '#888' };
-
-  let svgLanes = '';
-  for (let i = 0; i < 3; i++) {
-    const status = allClosed ? 'closed' : laneStatus(lanes[i]);
-    const x = startX + i * (laneW + 2);
-    const y = startY;
-    const col = laneColors[status] || '#888';
-
-    svgLanes += `<rect x="${x}" y="${y}" width="${laneW}" height="${laneH}" rx="6"
-      fill="${col}" opacity="0.92"/>`;
-
-    // Numéro de voie
-    svgLanes += `<text x="${x + laneW/2}" y="${y + 10}" text-anchor="middle"
-      font-size="9" fill="rgba(255,255,255,0.7)" font-family="sans-serif">V${i+1}</text>`;
-
-    if (status === 'closed') {
-      // Croix rouge
-      svgLanes += `
-        <line x1="${x+12}" y1="${y+22}" x2="${x+laneW-12}" y2="${y+laneH-14}"
-          stroke="#ff5252" stroke-width="3" stroke-linecap="round"/>
-        <line x1="${x+laneW-12}" y1="${y+22}" x2="${x+12}" y2="${y+laneH-14}"
-          stroke="#ff5252" stroke-width="3" stroke-linecap="round"/>`;
-    } else if (status === 'stnaz') {
-      // Flèche vers le bas (St-Naz → St-Brévin = direction sud)
-      const ax = x + laneW/2;
-      svgLanes += `
-        <line x1="${ax}" y1="${y+16}" x2="${ax}" y2="${y+laneH-16}"
-          stroke="white" stroke-width="2.5" stroke-linecap="round"/>
-        <polygon points="${ax-7},${y+laneH-20} ${ax+7},${y+laneH-20} ${ax},${y+laneH-8}"
-          fill="white"/>`;
-    } else if (status === 'stbrevin') {
-      // Flèche vers le haut (St-Brévin → St-Naz = direction nord)
-      const ax = x + laneW/2;
-      svgLanes += `
-        <line x1="${ax}" y1="${y+laneH-16}" x2="${ax}" y2="${y+16}"
-          stroke="white" stroke-width="2.5" stroke-linecap="round"/>
-        <polygon points="${ax-7},${y+20} ${ax+7},${y+20} ${ax},${y+8}"
-          fill="white"/>`;
-    }
-  }
-
-  // Labels
-  const labelsY = H - 2;
-  const labelStyle = 'font-size:8px;fill:rgba(255,255,255,0.5);font-family:sans-serif;text-anchor:middle';
-
-  return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg"
-    style="width:100%;max-width:220px;display:block;margin:8px auto 0">
-    <!-- Légende haut -->
-    <text x="100" y="10" style="font-size:9px;fill:rgba(255,255,255,0.6);font-family:sans-serif;text-anchor:middle">← St-Nazaire</text>
-    ${svgLanes}
-    <!-- Légende bas -->
-    <text x="100" y="${labelsY}" style="font-size:9px;fill:rgba(255,255,255,0.6);font-family:sans-serif;text-anchor:middle">St-Brévin →</text>
-    <!-- Légende couleurs -->
-    <rect x="2" y="${startY}" width="8" height="8" rx="2" fill="#2196F3"/>
-    <text x="12" y="${startY+7}" style="${labelStyle};text-anchor:start">→ StNaz</text>
-    <rect x="2" y="${startY+12}" width="8" height="8" rx="2" fill="#FF9800"/>
-    <text x="12" y="${startY+19}" style="${labelStyle};text-anchor:start">→ StBrévin</text>
-  </svg>`;
 }
 
 // ─── Détection Pont de Saint-Nazaire ──────────────────────────────────────────
@@ -163,6 +87,49 @@ function isSaintNazaireBridge(entityId, friendlyName = '') {
          lowerName.includes('pont de saint nazaire');
 }
 
+// ─── Rendu Moderne des Voies ──────────────────────────────────────────────────
+
+function renderModernLanes(lanes, allClosed) {
+  if (!lanes || lanes.length !== 3) return '';
+
+  const laneItems = lanes.map((val, idx) => {
+    const status = allClosed ? 'closed' : laneStatus(val);
+    let bgClass = 'psnz-lane--closed';
+    let icon = '❌';
+    let dirText = 'Fermée';
+
+    if (status === 'stnaz') {
+      bgClass = 'psnz-lane--stnaz';
+      icon = '⬇';
+      dirText = 'Vers St-Brévin';
+    } else if (status === 'stbrevin') {
+      bgClass = 'psnz-lane--stbrevin';
+      icon = '⬆';
+      dirText = 'Vers St-Nazaire';
+    }
+
+    return `
+      <div class="psnz-lane-col ${bgClass}">
+        <div class="psnz-lane-tag">Voie ${idx + 1}</div>
+        <div class="psnz-lane-arrow">${icon}</div>
+        <div class="psnz-lane-dir">${dirText}</div>
+      </div>
+    `;
+  }).join('');
+
+  return `
+    <div class="psnz-lanes-wrapper">
+      <div class="psnz-lanes-header">
+        <span>← Sens St-Nazaire</span>
+        <span>Sens St-Brévin →</span>
+      </div>
+      <div class="psnz-lanes-row">
+        ${laneItems}
+      </div>
+    </div>
+  `;
+}
+
 // ─── Rendu Pont de Saint-Nazaire ─────────────────────────────────────────────
 
 function renderSaintNazaireBridge(hass, config, detectedEntityId = null) {
@@ -191,9 +158,20 @@ function renderSaintNazaireBridge(hass, config, detectedEntityId = null) {
   const entityNextCode = config.entity_pont_next_code || 'sensor.pont_saint_nazaire_prochaine_code';
   const entityNextLib = config.entity_pont_next_lib || 'sensor.pont_saint_nazaire_prochaine_libelle';
   const entityNextFrom = config.entity_pont_next_from || 'sensor.pont_saint_nazaire_prochaine_depuis';
-  const entityWind = config.entity_wind || 'sensor.pont_saint_nazaire_vent_vitesse';
-  const entityWindDir = config.entity_wind_dir || 'sensor.pont_saint_nazaire_vent_direction';
-  const entityWindGust = config.entity_wind_gust || 'sensor.pont_saint_nazaire_vent_rafales';
+  
+  // Recherche intelligente du capteur de vent
+  let entityWind = config.entity_wind || 'sensor.vent_pont_saint_nazaire';
+  let stWind = hass.states[entityWind];
+  if (!stWind) {
+    // Essayer d'autres noms courants
+    const windKeys = ['sensor.pont_saint_nazaire_vent_vitesse', 'sensor.vent_saint_nazaire', 'sensor.vitesse_du_vent', 'sensor.wind_speed'];
+    for (const k of windKeys) {
+      if (hass.states[k]) {
+        stWind = hass.states[k];
+        break;
+      }
+    }
+  }
 
   // États
   const stLib = hass.states[entityLib];
@@ -202,15 +180,12 @@ function renderSaintNazaireBridge(hass, config, detectedEntityId = null) {
   const stNextCode = hass.states[entityNextCode];
   const stNextLib = hass.states[entityNextLib];
   const stNextFrom = hass.states[entityNextFrom];
-  const stWind = hass.states[entityWind];
-  const stWindDir = hass.states[entityWindDir];
-  const stWindGust = hass.states[entityWindGust];
 
-  // Récupération souple du code et du libellé (support capteur unique multi-attributs ou capteurs séparés)
+  // Extraction souple des attributs
   const attrs = stCode ? (stCode.attributes || {}) : {};
   const rawCode = attrs.code_current_mode || attrs.code_mode || (stCode ? stCode.state : null);
   const code = rawCode && rawCode !== 'unavailable' && rawCode !== 'unknown' ? rawCode : null;
-  const lib = attrs.lib_current_mode || attrs.voies_ouvertes || (stLib ? stLib.state : null) || (code && !code.startsWith('M') ? code : (code || '—'));
+  const lib = attrs.lib_current_mode || attrs.voies_ouvertes || (stLib ? stLib.state : null) || (code && !code.startsWith('M') ? code : (code || ''));
   const parsed = parseBridgeCode(code);
   const allClosed = parsed ? parsed.allClosed : (code === 'M000' || (stCode && ['ferme','closed','fermé'].includes(stCode.state.toLowerCase())));
   const isEmergency = parsed && (parsed.type === 'urgence' || parsed.type === 'travaux');
@@ -222,53 +197,88 @@ function renderSaintNazaireBridge(hass, config, detectedEntityId = null) {
   const nextLib = attrs.prochaine_libelle || (stNextLib ? stNextLib.state : null);
   const nextFrom = attrs.prochaine_depuis || (stNextFrom ? stNextFrom.state : null);
 
+  // Vent
   const windSpeed = attrs.vent != null ? parseFloat(attrs.vent) : (attrs.wind_speed != null ? parseFloat(attrs.wind_speed) : (stWind ? parseFloat(stWind.state) : null));
-  const windDir = attrs.direction_vent != null ? parseFloat(attrs.direction_vent) : (attrs.wind_dir != null ? parseFloat(attrs.wind_dir) : (stWindDir ? parseFloat(stWindDir.state) : null));
-  const windGust = attrs.rafales != null ? parseFloat(attrs.rafales) : (attrs.wind_gust != null ? parseFloat(attrs.wind_gust) : (stWindGust ? parseFloat(stWindGust.state) : null));
+  const windDir = attrs.direction_vent != null ? parseFloat(attrs.direction_vent) : (attrs.wind_dir != null ? parseFloat(attrs.wind_dir) : (stWind?.attributes?.wind_direction_10m != null ? parseFloat(stWind.attributes.wind_direction_10m) : null));
+  const windGust = attrs.rafales != null ? parseFloat(attrs.rafales) : (attrs.wind_gust != null ? parseFloat(attrs.wind_gust) : (stWind?.attributes?.wind_gusts_10m != null ? parseFloat(stWind.attributes.wind_gusts_10m) : null));
 
   // Couleur principale
-  let headerBg = 'linear-gradient(135deg, #1565C0 0%, #1976D2 100%)';
+  let headerBg = 'linear-gradient(135deg, #1976D2 0%, #0D47A1 100%)';
   let statusBadge = '';
-  let statusColor = '#42A5F5';
 
   if (allClosed || code === 'M000') {
-    headerBg = 'linear-gradient(135deg, #B71C1C 0%, #D32F2F 100%)';
+    headerBg = 'linear-gradient(135deg, #C62828 0%, #8E0000 100%)';
     statusBadge = '<span class="psnz-badge psnz-badge--red">FERMÉ</span>';
-    statusColor = '#ef5350';
   } else if (isEmergency) {
-    headerBg = 'linear-gradient(135deg, #E65100 0%, #F57C00 100%)';
+    headerBg = 'linear-gradient(135deg, #EF6C00 0%, #E65100 100%)';
     statusBadge = `<span class="psnz-badge psnz-badge--orange">${parsed.type === 'urgence' ? 'URGENCE' : 'TRAVAUX'}</span>`;
-    statusColor = '#FFA726';
   } else if (parsed || (stCode && !['unavailable', 'unknown'].includes(stCode.state.toLowerCase()))) {
     statusBadge = '<span class="psnz-badge psnz-badge--green">OUVERT</span>';
   }
 
-  // Temps de traversée et embouteillage
-  let tpsHtml = '';
-  if (tpsSN !== null || tpsSB !== null) {
-    const congestionSN = tpsSN !== null ? (tpsSN > 10 ? '🔴' : tpsSN > 7 ? '🟡' : '🟢') : '';
-    const congestionSB = tpsSB !== null ? (tpsSB > 10 ? '🔴' : tpsSB > 7 ? '🟡' : '🟢') : '';
-    tpsHtml = `
-      <div class="psnz-row psnz-row--times">
-        ${tpsSN !== null ? `<div class="psnz-time-item">
-          <span class="psnz-time-label">⬇ St-Naz→St-Brévin</span>
-          <span class="psnz-time-val">${congestionSN} ${Math.round(tpsSN)} min</span>
-        </div>` : ''}
-        ${tpsSB !== null ? `<div class="psnz-time-item">
-          <span class="psnz-time-label">⬆ St-Brévin→St-Naz</span>
-          <span class="psnz-time-val">${congestionSB} ${Math.round(tpsSB)} min</span>
-        </div>` : ''}
-      </div>`;
+  // Rendu des Voies
+  let lanesHtml = '';
+  if (parsed && parsed.lanes) {
+    lanesHtml = renderModernLanes(parsed.lanes, allClosed);
+  } else if (stCode && ['ouvert', 'open'].includes((stCode.state || '').toLowerCase())) {
+    lanesHtml = `<div class="psnz-simple-status">🟢 Pont ouvert à la circulation</div>`;
+  } else if (!code || code === 'unavailable' || code === 'unknown' || !stCode) {
+    lanesHtml = `<div class="psnz-unavail">⚠️ Données indisponibles</div>`;
   }
 
-  // SVG voies ou statut clair
-  let svgHtml = '';
-  if (parsed && parsed.lanes) {
-    svgHtml = renderLaneSVG(parsed.lanes, allClosed);
-  } else if (stCode && ['ouvert', 'open'].includes((stCode.state || '').toLowerCase())) {
-    svgHtml = `<div style="text-align:center; padding: 6px 0; font-size: 0.9em; font-weight: 600; opacity: 0.95;">🟢 Pont ouvert à la circulation</div>`;
-  } else if (!code || code === 'unavailable' || code === 'unknown' || !stCode) {
-    svgHtml = `<div class="psnz-unavail">⚠️ Données indisponibles (capteur non configuré)</div>`;
+  // Blocs Métriques (Temps de traversée + Vent)
+  let metricsList = [];
+
+  if (tpsSN !== null && !isNaN(tpsSN)) {
+    const isHeavy = tpsSN > 10;
+    const isMedium = tpsSN > 7;
+    const dot = isHeavy ? '🔴' : isMedium ? '🟡' : '🟢';
+    metricsList.push(`
+      <div class="psnz-metric-card">
+        <div class="psnz-metric-label">St-Naz ➔ St-Brévin</div>
+        <div class="psnz-metric-value">${dot} <strong>${Math.round(tpsSN)}</strong> min</div>
+      </div>
+    `);
+  }
+
+  if (tpsSB !== null && !isNaN(tpsSB)) {
+    const isHeavy = tpsSB > 10;
+    const isMedium = tpsSB > 7;
+    const dot = isHeavy ? '🔴' : isMedium ? '🟡' : '🟢';
+    metricsList.push(`
+      <div class="psnz-metric-card">
+        <div class="psnz-metric-label">St-Brévin ➔ St-Naz</div>
+        <div class="psnz-metric-value">${dot} <strong>${Math.round(tpsSB)}</strong> min</div>
+      </div>
+    `);
+  }
+
+  if (windSpeed !== null && !isNaN(windSpeed)) {
+    const kmh = Math.round(windSpeed);
+    const dirStr = windDirection(windDir);
+    const gustStr = (windGust !== null && !isNaN(windGust)) ? ` · Raf. ${Math.round(windGust)}` : '';
+    const alert = windAlert(kmh);
+    metricsList.push(`
+      <div class="psnz-metric-card ${alert ? 'psnz-metric-card--alert' : ''}">
+        <div class="psnz-metric-label">💨 Vent direct</div>
+        <div class="psnz-metric-value"><strong>${kmh}</strong> km/h <span class="psnz-metric-sub">${dirStr}${gustStr}</span></div>
+      </div>
+    `);
+  }
+
+  const metricsHtml = metricsList.length > 0 ? `
+    <div class="psnz-metrics-grid">
+      ${metricsList.join('')}
+    </div>
+  ` : '';
+
+  // Alerte vent spécifique
+  let windAlertHtml = '';
+  if (windSpeed !== null && !isNaN(windSpeed)) {
+    const alert = windAlert(Math.round(windSpeed));
+    if (alert) {
+      windAlertHtml = `<div class="psnz-wind-alert psnz-wind-alert--${alert.level}">${alert.msg}</div>`;
+    }
   }
 
   // Prévision prochaine
@@ -282,28 +292,8 @@ function renderSaintNazaireBridge(hass, config, detectedEntityId = null) {
         <div class="psnz-next-title">📅 Prochaine évolution</div>
         <div class="psnz-next-body">
           ${nextIcon} ${nextLib || nextCode || '—'}
-          ${nextFrom ? `<br><span class="psnz-next-from">⏰ ${formatTime(nextFrom)}</span>` : ''}
+          ${nextFrom ? `<span class="psnz-next-from">⏰ ${formatTime(nextFrom)}</span>` : ''}
         </div>
-      </div>`;
-  }
-
-  // Vent
-  let windHtml = '';
-  if (windSpeed !== null && !isNaN(windSpeed)) {
-    const kmh = Math.round(windSpeed);
-    const bft = beaufortScale(kmh);
-    const alert = windAlert(kmh);
-    const dirLabel = windDirection(windDir);
-    const gustHtml = windGust !== null && !isNaN(windGust) ? ` (rafales ${Math.round(windGust)} km/h)` : '';
-    const alertHtml = alert ? `<div class="psnz-wind-alert psnz-wind-alert--${alert.level}">${alert.msg}</div>` : '';
-    windHtml = `
-      <div class="psnz-wind">
-        <div class="psnz-wind-header">💨 Vent au sommet du pont</div>
-        <div class="psnz-wind-body">
-          <span class="psnz-wind-speed">${kmh} km/h</span>
-          <span class="psnz-wind-detail"> Bft ${bft} · ${dirLabel}${gustHtml}</span>
-        </div>
-        ${alertHtml}
       </div>`;
   }
 
@@ -316,10 +306,10 @@ function renderSaintNazaireBridge(hass, config, detectedEntityId = null) {
         </div>
         ${statusBadge}
       </div>
-      <div class="psnz-lib">${lib || '—'}</div>
-      ${svgHtml}
-      ${tpsHtml}
-      ${windHtml}
+      ${lib ? `<div class="psnz-lib">${lib}</div>` : ''}
+      ${lanesHtml}
+      ${metricsHtml}
+      ${windAlertHtml}
       ${nextHtml}
     </div>`;
 }
@@ -345,35 +335,38 @@ function renderPortBridge(hass, entityId) {
 
   const isClosed = ['ferme', 'closed', 'off', 'fermé', 'fermeture'].includes(state);
   const isImminent = !isClosed && (state === 'fermeture_imminente' || (minutesLeft !== undefined && minutesLeft !== null && minutesLeft <= 15));
-  const isOpen = !isClosed && !isImminent;
+  const isUnavailable = state === 'unavailable' || state === 'unknown';
 
-  let bgGrad = 'linear-gradient(135deg, #1B5E20 0%, #2E7D32 100%)';
+  let bgGrad = 'linear-gradient(135deg, #2E7D32 0%, #1B5E20 100%)';
   let badge = '<span class="psnz-badge psnz-badge--green">OUVERT</span>';
-  let icon = '🟢';
-  if (isClosed) {
-    bgGrad = 'linear-gradient(135deg, #B71C1C 0%, #C62828 100%)';
+
+  if (isUnavailable) {
+    bgGrad = 'linear-gradient(135deg, #424242 0%, #303030 100%)';
+    badge = '<span class="psnz-badge" style="border-color:#9E9E9E;">INDISPONIBLE</span>';
+  } else if (isClosed) {
+    bgGrad = 'linear-gradient(135deg, #C62828 0%, #8E0000 100%)';
     badge = '<span class="psnz-badge psnz-badge--red">FERMÉ</span>';
-    icon = '🔴';
   } else if (isImminent) {
-    bgGrad = 'linear-gradient(135deg, #E65100 0%, #EF6C00 100%)';
-    badge = `<span class="psnz-badge psnz-badge--orange">⚠️ ${minutesLeft ? `Ferme dans ${minutesLeft} min` : 'Fermeture imminente'}</span>`;
-    icon = '🟠';
+    bgGrad = 'linear-gradient(135deg, #EF6C00 0%, #E65100 100%)';
+    badge = `<span class="psnz-badge psnz-badge--orange">⚠️ ${minutesLeft ? `Ferme dans ${minutesLeft} min` : 'Fermeture < 15 min'}</span>`;
   }
 
-  // Dernière fermeture/ouverture
+  // Historique dernier changement
   let historyHtml = '';
-  if (lastState) {
-    const lastLabel = ['ferme','closed','off','fermé'].includes((lastState||'').toLowerCase()) ? 'Dernière fermeture' : 'Dernière ouverture';
-    historyHtml = `<div class="psnz-history">
-      <span class="psnz-history-label">${lastLabel} :</span>
-      <span class="psnz-history-val">${lastStateTime ? formatTime(lastStateTime) : '—'}</span>
-    </div>`;
-  } else if (lastChanged) {
-    const lcLabel = isClosed ? 'Fermé depuis' : 'Ouvert depuis';
-    historyHtml = `<div class="psnz-history">
-      <span class="psnz-history-label">${lcLabel} :</span>
-      <span class="psnz-history-val">${formatTime(lastChanged)}</span>
-    </div>`;
+  if (!isUnavailable) {
+    if (lastState) {
+      const lastLabel = ['ferme','closed','off','fermé'].includes((lastState||'').toLowerCase()) ? 'Dernière fermeture' : 'Dernière ouverture';
+      historyHtml = `<div class="psnz-history">
+        <span class="psnz-history-label">${lastLabel} :</span>
+        <span class="psnz-history-val">${lastStateTime ? formatTime(lastStateTime) : '—'}</span>
+      </div>`;
+    } else if (lastChanged) {
+      const lcLabel = isClosed ? 'Fermé depuis' : 'Ouvert depuis';
+      historyHtml = `<div class="psnz-history">
+        <span class="psnz-history-label">${lcLabel} :</span>
+        <span class="psnz-history-val">${formatTime(lastChanged)}</span>
+      </div>`;
+    }
   }
 
   // Prochain événement
@@ -399,7 +392,7 @@ function renderPortBridge(hass, entityId) {
     </div>`;
 }
 
-// ─── Styles CSS ───────────────────────────────────────────────────────────────
+// ─── Styles CSS Modernes ───────────────────────────────────────────────────────
 
 const CARD_STYLES = `
   :host { display: block; }
@@ -407,16 +400,16 @@ const CARD_STYLES = `
   .psnz-wrapper {
     display: flex;
     flex-direction: column;
-    gap: 10px;
-    padding: 12px 14px 14px;
-    font-family: 'Inter', 'Roboto', sans-serif;
+    gap: 12px;
+    padding: 14px 16px 16px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   }
 
   .psnz-card {
-    border-radius: 14px;
-    padding: 14px 16px;
-    color: #fff;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.28);
+    border-radius: 16px;
+    padding: 16px 18px;
+    color: #ffffff;
+    box-shadow: 0 4px 18px rgba(0,0,0,0.24);
     cursor: pointer;
     transition: transform 0.18s ease, box-shadow 0.18s ease;
     overflow: hidden;
@@ -424,14 +417,14 @@ const CARD_STYLES = `
   }
   .psnz-card:hover {
     transform: translateY(-2px);
-    box-shadow: 0 8px 24px rgba(0,0,0,0.38);
+    box-shadow: 0 8px 26px rgba(0,0,0,0.36);
   }
   .psnz-card::before {
     content: '';
     position: absolute;
     top: 0; left: 0; right: 0;
     height: 2px;
-    background: rgba(255,255,255,0.25);
+    background: rgba(255,255,255,0.22);
   }
 
   .psnz-card--missing {
@@ -450,138 +443,197 @@ const CARD_STYLES = `
     display: flex;
     align-items: center;
     gap: 8px;
-    font-size: 1em;
+    font-size: 1.08em;
     font-weight: 700;
-    letter-spacing: 0.2px;
+    letter-spacing: -0.2px;
   }
-  .psnz-icon { font-size: 1.2em; }
+  .psnz-icon { font-size: 1.25em; }
 
   .psnz-badge {
-    font-size: 0.72em;
+    font-size: 0.74em;
     font-weight: 700;
     letter-spacing: 0.8px;
-    padding: 3px 10px;
+    padding: 4px 12px;
     border-radius: 20px;
     text-transform: uppercase;
     white-space: nowrap;
-    border: 1.5px solid rgba(255,255,255,0.35);
-    background: rgba(0,0,0,0.22);
+    border: 1.5px solid rgba(255,255,255,0.4);
+    background: rgba(0,0,0,0.25);
+    box-shadow: 0 2px 6px rgba(0,0,0,0.15);
   }
-  .psnz-badge--green { border-color: #A5D6A7; }
-  .psnz-badge--red { border-color: #EF9A9A; }
-  .psnz-badge--orange { border-color: #FFCC80; }
+  .psnz-badge--green { border-color: #81C784; background: rgba(46, 125, 50, 0.4); }
+  .psnz-badge--red { border-color: #E57373; background: rgba(198, 40, 40, 0.4); }
+  .psnz-badge--orange { border-color: #FFB74D; background: rgba(239, 108, 0, 0.4); }
 
   .psnz-lib {
-    font-size: 0.82em;
+    font-size: 0.86em;
+    opacity: 0.92;
+    margin-bottom: 12px;
+    font-weight: 500;
+  }
+
+  /* Rendu moderne des 3 voies */
+  .psnz-lanes-wrapper {
+    background: rgba(0, 0, 0, 0.22);
+    border-radius: 12px;
+    padding: 10px 12px 12px;
+    margin-bottom: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+  }
+  .psnz-lanes-header {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.72em;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    opacity: 0.75;
+    margin-bottom: 8px;
+  }
+  .psnz-lanes-row {
+    display: flex;
+    gap: 10px;
+  }
+  .psnz-lane-col {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 10px 6px;
+    border-radius: 10px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    transition: transform 0.15s ease;
+  }
+  .psnz-lane-col:hover {
+    transform: translateY(-2px);
+  }
+  .psnz-lane--stnaz {
+    background: linear-gradient(180deg, #1E88E5 0%, #1565C0 100%);
+    border: 1px solid rgba(255,255,255,0.25);
+  }
+  .psnz-lane--stbrevin {
+    background: linear-gradient(180deg, #FB8C00 0%, #EF6C00 100%);
+    border: 1px solid rgba(255,255,255,0.25);
+  }
+  .psnz-lane--closed {
+    background: linear-gradient(180deg, #424242 0%, #263238 100%);
+    border: 1px solid rgba(244,67,54,0.4);
     opacity: 0.85;
-    margin-bottom: 4px;
-    font-style: italic;
   }
-
-  /* SVG voies */
-  .psnz-unavail {
+  .psnz-lane-tag {
+    font-size: 0.72em;
+    font-weight: 700;
+    opacity: 0.85;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 2px;
+  }
+  .psnz-lane-arrow {
+    font-size: 1.4em;
+    line-height: 1;
+    margin: 4px 0;
+  }
+  .psnz-lane-dir {
+    font-size: 0.74em;
+    font-weight: 600;
     text-align: center;
-    font-size: 0.8em;
-    opacity: 0.7;
-    padding: 6px 0;
+    white-space: nowrap;
   }
 
-  /* Temps de traversée */
-  .psnz-row--times {
+  /* Grille des métriques (Temps + Vent) */
+  .psnz-metrics-grid {
     display: flex;
     gap: 8px;
     flex-wrap: wrap;
-    margin-top: 10px;
-    padding-top: 8px;
-    border-top: 1px solid rgba(255,255,255,0.18);
+    margin-top: 8px;
   }
-  .psnz-time-item {
+  .psnz-metric-card {
     flex: 1;
-    min-width: 120px;
-    background: rgba(0,0,0,0.18);
-    border-radius: 8px;
-    padding: 6px 10px;
+    min-width: 100px;
+    background: rgba(0, 0, 0, 0.22);
+    border-radius: 10px;
+    padding: 8px 10px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
   }
-  .psnz-time-label {
-    display: block;
+  .psnz-metric-card--alert {
+    border-color: rgba(255, 183, 77, 0.6);
+    background: rgba(230, 81, 0, 0.25);
+  }
+  .psnz-metric-label {
     font-size: 0.72em;
     opacity: 0.75;
-    margin-bottom: 2px;
+    margin-bottom: 3px;
+    font-weight: 500;
   }
-  .psnz-time-val {
-    font-size: 1.05em;
-    font-weight: 700;
-  }
-
-  /* Vent */
-  .psnz-wind {
-    margin-top: 10px;
-    padding: 8px 10px;
-    background: rgba(0,0,0,0.2);
-    border-radius: 8px;
-    border-top: 1px solid rgba(255,255,255,0.15);
-  }
-  .psnz-wind-header {
-    font-size: 0.75em;
-    opacity: 0.75;
-    margin-bottom: 4px;
-  }
-  .psnz-wind-body { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
-  .psnz-wind-speed { font-size: 1.1em; font-weight: 700; }
-  .psnz-wind-detail { font-size: 0.78em; opacity: 0.8; }
-  .psnz-wind-alert {
-    margin-top: 5px;
-    padding: 4px 8px;
-    border-radius: 6px;
-    font-size: 0.8em;
+  .psnz-metric-value {
+    font-size: 0.95em;
     font-weight: 600;
   }
-  .psnz-wind-alert--critical { background: rgba(183,28,28,0.6); }
-  .psnz-wind-alert--warning { background: rgba(230,81,0,0.6); }
-  .psnz-wind-alert--caution { background: rgba(0,0,0,0.25); }
+  .psnz-metric-value strong {
+    font-size: 1.15em;
+  }
+  .psnz-metric-sub {
+    font-size: 0.8em;
+    opacity: 0.8;
+    font-weight: normal;
+  }
+
+  /* Alerte vent */
+  .psnz-wind-alert {
+    margin-top: 10px;
+    padding: 6px 12px;
+    border-radius: 8px;
+    font-size: 0.82em;
+    font-weight: 600;
+  }
+  .psnz-wind-alert--critical { background: rgba(183,28,28,0.7); border: 1px solid #FF5252; }
+  .psnz-wind-alert--warning { background: rgba(230,81,0,0.7); border: 1px solid #FFB74D; }
+  .psnz-wind-alert--caution { background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.2); }
 
   /* Prévisions */
   .psnz-next {
-    margin-top: 8px;
-    padding: 7px 10px;
-    background: rgba(0,0,0,0.2);
-    border-radius: 8px;
+    margin-top: 10px;
+    padding: 8px 12px;
+    background: rgba(0,0,0,0.22);
+    border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.1);
   }
-  .psnz-next-title { font-size: 0.72em; opacity: 0.7; margin-bottom: 3px; }
-  .psnz-next-body { font-size: 0.85em; font-weight: 600; }
-  .psnz-next-from { font-size: 0.8em; font-weight: 400; opacity: 0.8; }
+  .psnz-next-title { font-size: 0.72em; opacity: 0.75; margin-bottom: 3px; font-weight: 600; }
+  .psnz-next-body { font-size: 0.86em; font-weight: 600; }
+  .psnz-next-from { font-size: 0.82em; font-weight: 400; opacity: 0.85; margin-left: 6px; }
 
   /* Historique */
   .psnz-history {
     margin-top: 6px;
-    font-size: 0.78em;
+    font-size: 0.8em;
     display: flex;
     gap: 6px;
     align-items: center;
     flex-wrap: wrap;
   }
   .psnz-history--next { margin-top: 3px; }
-  .psnz-history-label { opacity: 0.7; }
+  .psnz-history-label { opacity: 0.75; font-weight: 400; }
   .psnz-history-val { font-weight: 600; }
 
   /* Titre de section */
   .psnz-section-title {
-    font-size: 0.7em;
+    font-size: 0.74em;
     font-weight: 700;
     letter-spacing: 1.2px;
     text-transform: uppercase;
-    color: var(--secondary-text-color);
-    padding: 4px 2px 2px;
-    opacity: 0.75;
+    color: var(--secondary-text-color, #8e8e93);
+    padding: 4px 4px 2px;
+    opacity: 0.85;
   }
 
   /* Dernière MAJ */
   .psnz-footer {
     text-align: right;
-    font-size: 0.68em;
-    color: var(--secondary-text-color);
-    opacity: 0.6;
-    padding: 2px 2px 0;
+    font-size: 0.7em;
+    color: var(--secondary-text-color, #8e8e93);
+    opacity: 0.7;
+    padding: 2px 4px 0;
   }
 `;
 
@@ -656,7 +708,6 @@ class StatutPontPortSaintNazaireCard extends HTMLElement {
 
     const fullHtml = `
       <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
         ${CARD_STYLES}
       </style>
       <ha-card header="${config.title || 'Ponts de Saint-Nazaire'}">
@@ -719,7 +770,7 @@ const existingIdx = window.customCards.findIndex(c => c.type === 'statut-pont-po
 const cardDef = {
   type: 'statut-pont-port-saint-nazaire-card',
   name: 'Carte Ponts Saint-Nazaire',
-  description: 'Statut temps réel des ponts du Port et du Pont de Saint-Nazaire. Sens de circulation SVG, temps de traversée, vent, prévisions.',
+  description: 'Statut temps réel des ponts du Port et du Pont de Saint-Nazaire. Sens de circulation moderne, temps de traversée, vent en direct.',
   preview: true,
   documentationURL: 'https://github.com/Zeeod/statut-pont-port-saint-nazaire',
 };
