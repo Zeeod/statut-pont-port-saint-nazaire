@@ -169,12 +169,19 @@ function renderSaintNazaireBridge(hass, config, detectedEntityId = null) {
   let entityCode = config.entity_pont_st_naz || config.main_bridge || detectedEntityId;
   let stCode = entityCode ? hass.states[entityCode] : null;
 
-  // Auto-découverte dans hass.states si l'entité n'est pas trouvée directement
-  if (!stCode && hass.states) {
-    const candidateKey = Object.keys(hass.states).find(k => isSaintNazaireBridge(k, hass.states[k]?.attributes?.friendly_name));
-    if (candidateKey) {
-      entityCode = candidateKey;
-      stCode = hass.states[candidateKey];
+  // Si non trouvé ou si l'entité actuelle est unavailable, chercher un candidat actif dans hass.states
+  if ((!stCode || ['unavailable', 'unknown'].includes((stCode.state || '').toLowerCase())) && hass.states) {
+    const candidateKeys = Object.keys(hass.states).filter(k => isSaintNazaireBridge(k, hass.states[k]?.attributes?.friendly_name));
+    const activeKey = candidateKeys.find(k => {
+      const s = hass.states[k];
+      return s && !['unavailable', 'unknown'].includes((s.state || '').toLowerCase());
+    });
+    if (activeKey) {
+      entityCode = activeKey;
+      stCode = hass.states[activeKey];
+    } else if (!stCode && candidateKeys.length > 0) {
+      entityCode = candidateKeys[0];
+      stCode = hass.states[candidateKeys[0]];
     }
   }
 
