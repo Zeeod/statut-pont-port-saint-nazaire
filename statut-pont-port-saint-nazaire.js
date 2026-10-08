@@ -166,7 +166,18 @@ function isSaintNazaireBridge(entityId, friendlyName = '') {
 // ─── Rendu Pont de Saint-Nazaire ─────────────────────────────────────────────
 
 function renderSaintNazaireBridge(hass, config, detectedEntityId = null) {
-  const entityCode = config.entity_pont_st_naz || config.main_bridge || detectedEntityId || 'sensor.pont_saint_nazaire_code';
+  let entityCode = config.entity_pont_st_naz || config.main_bridge || detectedEntityId;
+  let stCode = entityCode ? hass.states[entityCode] : null;
+
+  // Auto-découverte dans hass.states si l'entité n'est pas trouvée directement
+  if (!stCode && hass.states) {
+    const candidateKey = Object.keys(hass.states).find(k => isSaintNazaireBridge(k, hass.states[k]?.attributes?.friendly_name));
+    if (candidateKey) {
+      entityCode = candidateKey;
+      stCode = hass.states[candidateKey];
+    }
+  }
+
   const entityLib = config.entity_pont_st_naz_lib || 'sensor.pont_saint_nazaire_libelle';
   const entityTpsSN = config.entity_pont_tps_sn || 'sensor.pont_saint_nazaire_temps_vers_stbrevin';
   const entityTpsSB = config.entity_pont_tps_sb || 'sensor.pont_saint_nazaire_temps_vers_stnazaire';
@@ -178,7 +189,6 @@ function renderSaintNazaireBridge(hass, config, detectedEntityId = null) {
   const entityWindGust = config.entity_wind_gust || 'sensor.pont_saint_nazaire_vent_rafales';
 
   // États
-  const stCode = hass.states[entityCode];
   const stLib = hass.states[entityLib];
   const stTpsSN = hass.states[entityTpsSN];
   const stTpsSB = hass.states[entityTpsSB];
@@ -244,12 +254,14 @@ function renderSaintNazaireBridge(hass, config, detectedEntityId = null) {
       </div>`;
   }
 
-  // SVG voies
+  // SVG voies ou statut clair
   let svgHtml = '';
   if (parsed && parsed.lanes) {
     svgHtml = renderLaneSVG(parsed.lanes, allClosed);
-  } else if (!code || code === 'unavailable' || code === 'unknown') {
-    svgHtml = `<div class="psnz-unavail">⚠️ Données indisponibles</div>`;
+  } else if (stCode && ['ouvert', 'open'].includes((stCode.state || '').toLowerCase())) {
+    svgHtml = `<div style="text-align:center; padding: 6px 0; font-size: 0.9em; font-weight: 600; opacity: 0.95;">🟢 Pont ouvert à la circulation</div>`;
+  } else if (!code || code === 'unavailable' || code === 'unknown' || !stCode) {
+    svgHtml = `<div class="psnz-unavail">⚠️ Données indisponibles (capteur non configuré)</div>`;
   }
 
   // Prévision prochaine
